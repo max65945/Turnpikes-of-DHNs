@@ -8,7 +8,34 @@ using HiGHS
 using Serialization
 
 #=
-    Inport DHN data: All required DHN data is stored in the binary file `DHN_data.bin` that is converted into a named tuple `p`.
+    # Inport DHN data: All required DHN data is stored in the binary file `DHN_data.bin` that is converted into a named tuple `p`.
+
+    ## Fields of p:
+
+    - N_n: Number of vertices,
+    - N_e: Number of edges,
+    - N_p: Number of producers,
+    - N_d: Number of demands,
+    - producer_id: IDs of vertices that are producer,
+    - consumer_id: IDs of vertices that are consumer,
+    - valves_idx: IDs of edges that are valves, 
+    - B_p: Maps producers_idx to vertices, as B matrix from paper,
+    - B_d: Maps consumers_idx to vertices, as E matrix from paper,
+    - B0: vertex-edge incidence matrix,
+    - F: fundamental loop matrix,
+    - indep: IDs od independent edges,
+    - Q_P: Weight matrix for penalizing power, 
+    - K: Diagonal matrix containing heat loss coefficients,
+    - D_e: Vetor containing pipe diameters,
+    - A_e: Vetor containing pipe cross sectional areas,
+    - m_e: Vetor containing pipe masses,
+    - m_v: Vetor containing vertex masses,
+    - L_e: Vetor containing pipe lengths,
+    - P_n: Vector containing nominal heat demands,
+    - T_n: Vector containing nominal vertex temperatures,
+    - q_n: Vector containing nominal mass flows,
+    - water_rho: densitiy of water,
+    - water_c_p: heat capacity of water.
 =#
 p = open("./DHN_data.bin", "r") do io
     deserialize(io)
@@ -16,6 +43,7 @@ end
 
 include("lq.jl")
 include("solve_OCP.jl")
+include("check_turnpike.jl")
 #=
     "Infinite" horizon parameter
 =#
@@ -54,61 +82,44 @@ foreach(i -> Q[i, i] = 10.0^4, p.producer_id)
 # Approximate infinite horizon OCP
 T_inf, P_p_inf = solve_OCP(P_d, p.K, dt, N_inf, p_N_inf, Q, p; T0=p.T_n)
 
+# Finite horizon OCP 1
 N0 = 500
-N_3 = Int(1.2 * N)
 T_ocp_1, P_p_ocp_1 = solve_OCP(
     P_d, p.K, dt, N, p_N_inf, Q, p; N0=N0, T0=0.8 * T_inf[:, N0]
 )
+
+# Finite horizon OCP 2
 T_ocp_2, P_p_ocp_2 = solve_OCP(
     P_d, p.K, dt, N, p_N_inf, Q, p; N0=N0, T0=1.1 * T_inf[:, N0]
 )
+
+# Finite horizon OCP 3
+N_3 = Int(1.2 * N)
 T_ocp_3, P_p_ocp_3 = solve_OCP(
     P_d, p.K, dt, N_3, p_N_inf, Q, p; N0=N0, T0=0.8 * T_inf[:, N0]
 )
 
-# Check turnpike
-function check_turnpike(T, P_p)
-    tol = 1.0 * 10.0^0
-    k_entry = 0
-    k_exit = N
-    for i in 1:p.N_n
-        idxs = filter(
-            k -> abs(T[i, k] - T_inf[i, N0 + k]) / (sum(T[i, :]) / length(T[i, :])) < tol,
-            eachindex(T[i, :]),
-        )
-        minimum(idxs) > k_entry ? k_entry = minimum(idxs) : nothing
-        maximum(idxs) < k_exit ? k_exit = maximum(idxs) : nothing
-        @assert sort(idxs) == collect(minimum(idxs):maximum(idxs)) "Turnpike is entered/left multiple times."
-    end
-    for i in 1:p.N_p
-        idxs = filter(
-            k ->
-                abs(P_p[i, k] - P_p_inf[i, N0 + k]) / (sum(P_p[i, :]) / length(P_p[i, :])) <
-                tol,
-            eachindex(P_p[i, :]),
-        )
-        minimum(idxs) > k_entry ? k_entry = minimum(idxs) : nothing
-        maximum(idxs) < k_exit ? k_exit = maximum(idxs) : nothing
-        @assert sort(idxs) == collect(minimum(idxs):maximum(idxs)) "Turnpike is entered/left multiple times."
-    end
-    return k_entry, k_exit
-end
-
+# Get time steps of entring and leaving the turnpike for each OCP solution
 k_entry_1, k_exit_1 = check_turnpike(T_ocp_1, P_p_ocp_1)
 k_entry_2, k_exit_2 = check_turnpike(T_ocp_2, P_p_ocp_2)
 k_entry_3, k_exit_3 = check_turnpike(T_ocp_3, P_p_ocp_3)
 
+# Check that OCP 1 and OCP 3 enter tunrpike at same point in time (2% tolerance allowed)
 Δ = abs(k_entry_1 - k_entry_3)
 μ = (abs(k_entry_1) + abs(k_entry_3)) / 2
 @assert Δ <= 0.02 * μ "k_exit mismatch: |$k_entry_1 − $k_entry_3| = $Δ > 2% of average $μ"
 
+# Check that OCP 1 and OCP 2 exit tunrpike at same point in time (2% tolerance allowed)
 Δ = abs(k_exit_1 - k_exit_2)
 μ = (abs(k_exit_1) + abs(k_exit_2)) / 2
 @assert Δ <= 0.02 * μ "k_exit mismatch: |$k_exit_1 − $k_exit_2| = $Δ > 2% of average $μ"
 
+# Check that OCP 1 leaves turnpike earlier than OCP 3
 @assert k_exit_1 <= k_exit_3
 
-# Postprocessing
+#=
+    # Postprocessing
+=#
 using CairoMakie
 dN = 20
 x_T_inf = (N0 + 1 - dN):(N0 + N_3 + dN)
@@ -123,7 +134,7 @@ x_P_ocp_2 = (N0 + 1):(N0 + N - 1)
 x_T_ocp_3 = (N0 + 1):(N0 + N_3)
 x_P_ocp_3 = (N0 + 1):(N0 + N_3 - 1)
 
-fig = Figure()  # Create a new figure
+fig = Figure(size=(1200,800)); # Create a new figure
 
 ax = Axis(fig[1, 1]; ylabel="[°C]")
 lines!(
@@ -179,3 +190,4 @@ lines!(ax, x_P_inf, p_N_inf[1, (N0 + 1 - dN):(N0 + N_3 - 1 + dN)]; label="p_1")
 lines!(ax, x_P_inf, p_N_inf[2, (N0 + 1 - dN):(N0 + N_3 - 1 + dN)]; label="p_2")
 
 fig  # Display the figure
+save("results.png", fig)
