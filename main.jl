@@ -41,9 +41,9 @@ p = open("./DHN_data.bin", "r") do io
     deserialize(io)
 end
 
-include("lq.jl")
-include("solve_OCP.jl")
-include("check_turnpike.jl")
+include("./funcs/lq.jl")
+include("./funcs/solve_OCP.jl")
+include("./funcs/check_turnpike.jl")
 #=
     "Infinite" horizon parameter
 =#

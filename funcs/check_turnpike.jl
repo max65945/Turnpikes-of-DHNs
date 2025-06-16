@@ -13,8 +13,6 @@ function check_turnpike(T, P_p)
         maximum(idxs) < k_exit ? k_exit = maximum(idxs) : nothing
         sort(idxs) == collect(minimum(idxs):maximum(idxs)) ? multentry = true : nothing
     end
-    println(k_entry)
-    println(k_exit)
     for i in 1:p.N_p
         idxs = filter(
             k ->
