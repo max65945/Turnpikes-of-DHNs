@@ -30,8 +30,8 @@ function solve_OCP(P_d, K, dt, N, p_N_inf, Q, p; N0=0, T0=nothing)
             dt *
             inv(Diagonal(p.m_v)) *
             (
-                A * T[:, k] + (10^3 / water_c_p) * p.B_p * P_p[:, k] -
-                (10^3 / water_c_p) * p.B_d * P_d[:, N0 + k]
+                A * T[:, k] + (10^3 / p.water_c_p) * p.B_p * P_p[:, k] -
+                (10^3 / p.water_c_p) * p.B_d * P_d[:, N0 + k]
             )
         ),
         1:(N - 1),
